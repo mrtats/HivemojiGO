@@ -51,6 +51,7 @@ func main() {
 
 	apiServer := api.New(store)
 	apiServer.Register(e)
+	e.Static("/", "web")
 
 	go func() {
 		log.Printf("listening on %s", cfg.ServerAddr)
