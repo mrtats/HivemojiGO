@@ -16,6 +16,7 @@ RUN adduser -S -D appuser
 WORKDIR /home/appuser
 
 COPY --from=builder /app/hivemoji .
+COPY --from=builder /app/web ./web
 
 EXPOSE 8080
 USER appuser
