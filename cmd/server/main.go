@@ -47,7 +47,7 @@ func main() {
 
 	e := echo.New()
 	e.HideBanner = true
-	e.Use(middleware.Logger(), middleware.Recover())
+	e.Use(middleware.Logger(), middleware.Recover(), middleware.CORS())
 
 	apiServer := api.New(store)
 	apiServer.Register(e)
