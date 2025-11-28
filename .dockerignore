@@ -1,0 +1,25 @@
+# Binaries
+hivemoji
+*.exe
+*.dll
+*.so
+
+# Build artifacts
+bin/
+dist/
+
+# VCS
+.git
+
+# IDE/editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Modules cache
+pkg/
+
+# OS junk
+.DS_Store
+Thumbs.db

@@ -1,0 +1,37 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:17
+    container_name: hivemoji_db
+    environment:
+      POSTGRES_USER: hivemoji
+      POSTGRES_PASSWORD: hivemoji
+      POSTGRES_DB: hivemoji
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hivemoji"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  app:
+    build: .
+    container_name: hivemoji_app
+    environment:
+      POSTGRES_DSN: postgres://hivemoji:hivemoji@db:5432/hivemoji?sslmode=disable
+      HIVE_RPC_URL: https://api.hive.blog
+      SERVER_ADDR: ":8080"
+      HIVE_START_BLOCK: "101565994"
+      # HIVE_POLL_INTERVAL: "3s"
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+volumes:
+  db-data:
