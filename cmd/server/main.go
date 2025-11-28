@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"net/http"
 	"os/signal"
 	"syscall"
 	"time"
@@ -53,7 +54,7 @@ func main() {
 
 	go func() {
 		log.Printf("listening on %s", cfg.ServerAddr)
-		if err := e.Start(cfg.ServerAddr); err != nil && !errors.Is(err, echo.ErrServerClosed) {
+		if err := e.Start(cfg.ServerAddr); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("http server: %v", err)
 		}
 	}()
