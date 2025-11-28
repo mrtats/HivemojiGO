@@ -5,7 +5,9 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -51,7 +53,10 @@ func main() {
 
 	apiServer := api.New(store)
 	apiServer.Register(e)
-	e.Static("/", "web")
+
+	webDir := assetDir()
+	e.File("/", filepath.Join(webDir, "index.html"))
+	e.Static("/", webDir)
 
 	go func() {
 		log.Printf("listening on %s", cfg.ServerAddr)
@@ -67,6 +72,26 @@ func main() {
 	if err := e.Shutdown(shutdownCtx); err != nil {
 		log.Printf("server shutdown error: %v", err)
 	}
+}
+
+func assetDir() string {
+	exePath, err := os.Executable()
+	if err == nil {
+		exeDir := filepath.Dir(exePath)
+		candidate := filepath.Join(exeDir, "web")
+		if _, err := os.Stat(filepath.Join(candidate, "index.html")); err == nil {
+			return candidate
+		}
+	}
+
+	cwd, _ := os.Getwd()
+	candidate := filepath.Join(cwd, "web")
+	if _, err := os.Stat(filepath.Join(candidate, "index.html")); err == nil {
+		return candidate
+	}
+
+	log.Fatal("web assets not found (missing web/index.html)")
+	return ""
 }
 
 func ingestLoop(ctx context.Context, proc *processor.Processor, store *storage.Store, cfg config.Config) {
