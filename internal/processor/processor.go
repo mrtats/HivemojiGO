@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 
 	"hivemoji/internal/hive"
 	"hivemoji/internal/storage"
@@ -58,7 +59,7 @@ func (p *Processor) ProcessBlock(ctx context.Context, block *hive.Block) error {
 
 			author := firstNonEmpty(custom.RequiredPostingAuths, custom.RequiredAuths)
 
-			if err := p.handlePayload(ctx, payloadBytes, author); err != nil {
+			if err := p.handlePayload(ctx, block.Number, payloadBytes, author); err != nil {
 				return fmt.Errorf("block %d: %w", block.Number, err)
 			}
 		}
@@ -70,7 +71,7 @@ func (p *Processor) ProcessBlock(ctx context.Context, block *hive.Block) error {
 	return nil
 }
 
-func (p *Processor) handlePayload(ctx context.Context, payload []byte, author string) error {
+func (p *Processor) handlePayload(ctx context.Context, blockNum int64, payload []byte, author string) error {
 	var env struct {
 		Version int    `json:"version"`
 		Op      string `json:"op"`
@@ -79,27 +80,29 @@ func (p *Processor) handlePayload(ctx context.Context, payload []byte, author st
 		return fmt.Errorf("payload envelope: %w", err)
 	}
 
+	log.Printf("block %d: hivemoji v%d op=%s author=%s", blockNum, env.Version, env.Op, safeAuthor(author))
+
 	switch env.Version {
 	case 1:
-		return p.handleV1(ctx, payload, author)
+		return p.handleV1(ctx, blockNum, payload, author)
 	case 2:
-		return p.handleV2(ctx, payload, author)
+		return p.handleV2(ctx, blockNum, payload, author)
 	default:
 		return fmt.Errorf("unsupported version %d", env.Version)
 	}
 }
 
-func (p *Processor) handleV1(ctx context.Context, payload []byte, author string) error {
+func (p *Processor) handleV1(ctx context.Context, blockNum int64, payload []byte, author string) error {
 	var msg struct {
-		Version  int    `json:"version"`
-		Op       string `json:"op"`
-		Name     string `json:"name"`
-		Mime     string `json:"mime"`
-		Width    int    `json:"width"`
-		Height   int    `json:"height"`
-		Data     string `json:"data"`
-		Animated bool   `json:"animated"`
-		Loop     *int   `json:"loop"`
+		Version  int             `json:"version"`
+		Op       string          `json:"op"`
+		Name     string          `json:"name"`
+		Mime     string          `json:"mime"`
+		Width    int             `json:"width"`
+		Height   int             `json:"height"`
+		Data     string          `json:"data"`
+		Animated bool            `json:"animated"`
+		Loop     json.RawMessage `json:"loop"`
 		Fallback *struct {
 			Mime string `json:"mime"`
 			Data string `json:"data"`
@@ -112,6 +115,10 @@ func (p *Processor) handleV1(ctx context.Context, payload []byte, author string)
 
 	switch msg.Op {
 	case "register":
+		loop, err := parseLoop(msg.Loop)
+		if err != nil {
+			return fmt.Errorf("loop: %w", err)
+		}
 		raw, err := base64.StdEncoding.DecodeString(msg.Data)
 		if err != nil {
 			return fmt.Errorf("decode v1 data: %w", err)
@@ -127,6 +134,17 @@ func (p *Processor) handleV1(ctx context.Context, payload []byte, author string)
 			fallbackMime = msg.Fallback.Mime
 		}
 
+		log.Printf(
+			"block %d: v1 register name=%s author=%s animated=%t loop=%v bytes=%d fallback_bytes=%d",
+			blockNum,
+			msg.Name,
+			safeAuthor(author),
+			msg.Animated,
+			loop,
+			len(raw),
+			len(fallbackData),
+		)
+
 		return p.store.UpsertV1(ctx, storage.RegisterV1{
 			Name:         msg.Name,
 			Author:       author,
@@ -135,7 +153,7 @@ func (p *Processor) handleV1(ctx context.Context, payload []byte, author string)
 			Height:       msg.Height,
 			Data:         raw,
 			Animated:     msg.Animated,
-			Loop:         msg.Loop,
+			Loop:         loop,
 			FallbackMime: fallbackMime,
 			FallbackData: fallbackData,
 		})
@@ -147,22 +165,22 @@ func (p *Processor) handleV1(ctx context.Context, payload []byte, author string)
 	}
 }
 
-func (p *Processor) handleV2(ctx context.Context, payload []byte, author string) error {
+func (p *Processor) handleV2(ctx context.Context, blockNum int64, payload []byte, author string) error {
 	var msg struct {
-		Version  int    `json:"version"`
-		Op       string `json:"op"`
-		ID       string `json:"id"`
-		Name     string `json:"name"`
-		Mime     string `json:"mime"`
-		Width    int    `json:"width"`
-		Height   int    `json:"height"`
-		Animated bool   `json:"animated"`
-		Loop     *int   `json:"loop"`
-		Checksum string `json:"checksum"`
-		Kind     string `json:"kind"`
-		Seq      int    `json:"seq"`
-		Total    int    `json:"total"`
-		Data     string `json:"data"`
+		Version  int             `json:"version"`
+		Op       string          `json:"op"`
+		ID       string          `json:"id"`
+		Name     string          `json:"name"`
+		Mime     string          `json:"mime"`
+		Width    int             `json:"width"`
+		Height   int             `json:"height"`
+		Animated bool            `json:"animated"`
+		Loop     json.RawMessage `json:"loop"`
+		Checksum string          `json:"checksum"`
+		Kind     string          `json:"kind"`
+		Seq      int             `json:"seq"`
+		Total    int             `json:"total"`
+		Data     string          `json:"data"`
 	}
 
 	if err := json.Unmarshal(payload, &msg); err != nil {
@@ -175,6 +193,15 @@ func (p *Processor) handleV2(ctx context.Context, payload []byte, author string)
 
 	if msg.Op == "register" && msg.Data == "" {
 		// Manifest-only entry for discovery; nothing to persist.
+		log.Printf(
+			"block %d: v2 register manifest name=%s author=%s upload=%s animated=%t loop=%s",
+			blockNum,
+			msg.Name,
+			safeAuthor(author),
+			msg.ID,
+			msg.Animated,
+			string(msg.Loop),
+		)
 		return nil
 	}
 
@@ -183,7 +210,20 @@ func (p *Processor) handleV2(ctx context.Context, payload []byte, author string)
 	}
 
 	if msg.Seq <= 0 {
-		return errors.New("seq must be > 0")
+		log.Printf(
+			"block %d: skip v2 chunk upload=%s kind=%s name=%s seq=%d (must be > 0)",
+			blockNum,
+			msg.ID,
+			msg.Kind,
+			msg.Name,
+			msg.Seq,
+		)
+		return nil
+	}
+
+	loop, err := parseLoop(msg.Loop)
+	if err != nil {
+		return fmt.Errorf("loop: %w", err)
 	}
 
 	data, err := base64.StdEncoding.DecodeString(msg.Data)
@@ -205,7 +245,7 @@ func (p *Processor) handleV2(ctx context.Context, payload []byte, author string)
 		Width:    msg.Width,
 		Height:   msg.Height,
 		Animated: msg.Animated,
-		Loop:     msg.Loop,
+		Loop:     loop,
 		Checksum: msg.Checksum,
 		Kind:     kind,
 		Seq:      msg.Seq,
@@ -219,6 +259,18 @@ func (p *Processor) handleV2(ctx context.Context, payload []byte, author string)
 	if assembled == nil {
 		return nil
 	}
+
+	log.Printf(
+		"block %d: v2 assembled upload=%s kind=%s name=%s author=%s animated=%t loop=%v bytes=%d",
+		blockNum,
+		assembled.UploadID,
+		assembled.Kind,
+		assembled.Name,
+		safeAuthor(assembled.Author),
+		assembled.Animated,
+		assembled.Loop,
+		len(assembled.Data),
+	)
 
 	return p.handleCompletedSet(ctx, assembled)
 }
@@ -251,6 +303,11 @@ func (p *Processor) FetchBlock(ctx context.Context, number int64) (*hive.Block, 
 	return p.client.GetBlock(ctx, number)
 }
 
+// HeadBlockNumber returns the chain head block number from the Hive node.
+func (p *Processor) HeadBlockNumber(ctx context.Context) (int64, error) {
+	return p.client.HeadBlockNumber(ctx)
+}
+
 func firstNonEmpty(primary []string, fallback []string) string {
 	if len(primary) > 0 && primary[0] != "" {
 		return primary[0]
@@ -259,4 +316,35 @@ func firstNonEmpty(primary []string, fallback []string) string {
 		return fallback[0]
 	}
 	return ""
+}
+
+func safeAuthor(author string) string {
+	if strings.TrimSpace(author) == "" {
+		return "<unknown>"
+	}
+	return author
+}
+
+// parseLoop accepts either an int or a boolean for the loop field.
+// Booleans map to nil/zero to keep storage typed as *int.
+func parseLoop(raw json.RawMessage) (*int, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+
+	var asBool bool
+	if err := json.Unmarshal(raw, &asBool); err == nil {
+		if !asBool {
+			return nil, nil
+		}
+		zero := 0
+		return &zero, nil
+	}
+
+	var asInt int
+	if err := json.Unmarshal(raw, &asInt); err == nil {
+		return &asInt, nil
+	}
+
+	return nil, fmt.Errorf("loop must be boolean or integer")
 }

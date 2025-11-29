@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -307,6 +308,49 @@ func (s *Store) assembleChunks(ctx context.Context, tx pgx.Tx, uploadID, kind st
 	}
 
 	return &set, nil
+}
+
+// CleanupIncomplete deletes incomplete chunk sets (and their chunks) older than the given age.
+func (s *Store) CleanupIncomplete(ctx context.Context, olderThan time.Duration) (int64, int64, error) {
+	cutoff := time.Now().Add(-olderThan)
+
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return 0, 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var deletedSets, deletedChunks int64
+	err = tx.QueryRow(ctx, `
+        WITH stale AS (
+            SELECT upload_id, kind FROM hivemoji_chunk_sets
+            WHERE completed = false AND updated_at < $1
+        ),
+        deleted_chunks AS (
+            DELETE FROM hivemoji_chunks c
+            USING stale s
+            WHERE c.upload_id = s.upload_id AND c.kind = s.kind
+            RETURNING 1
+        ),
+        deleted_sets AS (
+            DELETE FROM hivemoji_chunk_sets s2
+            USING stale s
+            WHERE s2.upload_id = s.upload_id AND s2.kind = s.kind
+            RETURNING 1
+        )
+        SELECT
+            COALESCE((SELECT count(*) FROM deleted_sets), 0) AS sets,
+            COALESCE((SELECT count(*) FROM deleted_chunks), 0) AS chunks
+    `, cutoff).Scan(&deletedSets, &deletedChunks)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, 0, err
+	}
+
+	return deletedSets, deletedChunks, nil
 }
 
 // UpsertFromChunks saves an assembled set (and optional fallback) into the assets table.

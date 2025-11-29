@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 
 	hivego "github.com/deathwingtheboss/hivego"
 	"github.com/deathwingtheboss/hivego/types"
@@ -71,4 +72,48 @@ func (c *Client) GetBlock(ctx context.Context, number int64) (*Block, error) {
 	}
 
 	return &block, nil
+}
+
+// HeadBlockNumber fetches the chain head block number.
+func (c *Client) HeadBlockNumber(ctx context.Context) (int64, error) {
+	if ctx.Err() != nil {
+		return 0, ctx.Err()
+	}
+
+	raw, err := c.node.GetDynamicGlobalProps()
+	if err != nil {
+		return 0, fmt.Errorf("head block props: %w", err)
+	}
+
+	var props map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &props); err != nil {
+		return 0, fmt.Errorf("decode global props: %w", err)
+	}
+
+	var head any
+	if v, ok := props["head_block_number"]; ok {
+		head = v
+	} else {
+		return 0, fmt.Errorf("head_block_number missing in global props")
+	}
+
+	var n int64
+	switch t := head.(type) {
+	case json.RawMessage:
+		if err := json.Unmarshal(t, &n); err == nil {
+			return n, nil
+		}
+		var s string
+		if err := json.Unmarshal(t, &s); err == nil {
+			i, err := strconv.ParseInt(s, 10, 64)
+			if err == nil {
+				return i, nil
+			}
+		}
+	case float64:
+		n = int64(t)
+		return n, nil
+	}
+
+	return 0, fmt.Errorf("unable to parse head_block_number")
 }

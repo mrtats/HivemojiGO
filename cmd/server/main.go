@@ -107,6 +107,9 @@ func ingestLoop(ctx context.Context, proc *processor.Processor, store *storage.S
 
 	log.Printf("starting ingestion from block %d", current)
 
+	behindLogged := false
+	lastCleanup := time.Now()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -122,9 +125,26 @@ func ingestLoop(ctx context.Context, proc *processor.Processor, store *storage.S
 			continue
 		}
 		if block == nil {
-			time.Sleep(cfg.PollInterval)
+			interval := cfg.PollInterval
+			head, err := proc.HeadBlockNumber(ctx)
+			if err != nil {
+				log.Printf("head block number: %v", err)
+			} else if head > current {
+				interval = cfg.CatchupPollInterval
+				if !behindLogged {
+					log.Printf("behind head: at %d, head %d (lag %d); polling every %s", current, head, head-current, interval)
+					behindLogged = true
+				}
+			} else if behindLogged {
+				log.Printf("caught up to head (head %d); returning to interval %s", head, cfg.PollInterval)
+				behindLogged = false
+			}
+
+			time.Sleep(interval)
 			continue
 		}
+
+		log.Printf("block %d: fetched (%d transactions)", block.Number, len(block.Transactions))
 
 		if err := proc.ProcessBlock(ctx, block); err != nil {
 			log.Printf("process block %d: %v", current, err)
@@ -132,6 +152,18 @@ func ingestLoop(ctx context.Context, proc *processor.Processor, store *storage.S
 			continue
 		}
 
+		log.Printf("block %d: processed", block.Number)
 		current++
+
+		// Periodically clean up stale incomplete chunk uploads.
+		if time.Since(lastCleanup) >= cfg.IncompleteCleanupInterval {
+			sets, chunks, err := store.CleanupIncomplete(ctx, cfg.IncompleteChunkTTL)
+			if err != nil {
+				log.Printf("cleanup incomplete chunks: %v", err)
+			} else if sets > 0 || chunks > 0 {
+				log.Printf("cleanup incomplete: removed %d chunk_sets and %d chunks older than %s", sets, chunks, cfg.IncompleteChunkTTL)
+			}
+			lastCleanup = time.Now()
+		}
 	}
 }

@@ -22,7 +22,7 @@ services:
     container_name: hivemoji_app
     environment:
       POSTGRES_DSN: postgres://hivemoji:hivemoji@db:5432/hivemoji?sslmode=disable
-      HIVE_RPC_URL: https://api.hive.blog
+      HIVE_RPC_URL: https://api.deathwing.me
       SERVER_ADDR: ":8080"
       HIVE_START_BLOCK: "101565994"
       # HIVE_POLL_INTERVAL: "3s"

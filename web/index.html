@@ -268,7 +268,7 @@
       const fallback = fallbackFile ? await readImage(fallbackFile) : null;
 
       const animated = document.getElementById("animated").checked || undefined;
-      const loop = document.getElementById("loop").checked ? 0 : undefined;
+      const loop = document.getElementById("loop").checked ? true : undefined;
 
       const basePayload = {
         op: "register",
