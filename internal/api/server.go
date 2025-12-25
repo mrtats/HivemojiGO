@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/base64"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/labstack/echo/v4"
@@ -23,6 +24,8 @@ func New(store *storage.Store) *Server {
 // Register wires HTTP handlers onto an Echo instance.
 func (s *Server) Register(e *echo.Echo) {
 	e.GET("/health", s.handleHealth)
+	e.GET("/@:author/@:name", s.handleGetImage)
+	e.GET("/:author/:name", s.handleGetImage)
 	e.GET("/api/emojis", s.handleList)
 	e.GET("/api/authors/:author/emojis", s.handleListByAuthor)
 	e.GET("/api/authors/:author/emojis/:name", s.handleGetByAuthor)
@@ -111,6 +114,56 @@ func (s *Server) handleGetByAuthor(c echo.Context) error {
 		return echo.ErrNotFound
 	}
 	return c.JSON(http.StatusOK, toResponse(*asset, includeData))
+}
+
+func (s *Server) handleGetImage(c echo.Context) error {
+	rawAuthor := c.Param("author")
+	rawName := c.Param("name")
+	if strings.TrimSpace(rawAuthor) == "" || strings.TrimSpace(rawName) == "" {
+		return echo.ErrNotFound
+	}
+
+	author := rawAuthor
+	name := rawName
+	if c.Path() == "/:author/:name" {
+		var ok bool
+		author, ok = trimAtPrefix(rawAuthor)
+		if !ok {
+			return echo.ErrNotFound
+		}
+		name, ok = trimAtPrefix(rawName)
+		if !ok {
+			return echo.ErrNotFound
+		}
+	}
+
+	asset, err := s.store.GetAsset(c.Request().Context(), author, name)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+	if asset == nil || len(asset.Data) == 0 {
+		return echo.ErrNotFound
+	}
+
+	return c.Blob(http.StatusOK, asset.Mime, asset.Data)
+}
+
+func trimAtPrefix(raw string) (string, bool) {
+	value := raw
+	if strings.Contains(value, "%") {
+		decoded, err := url.PathUnescape(value)
+		if err == nil {
+			value = decoded
+		}
+	}
+	if !strings.HasPrefix(value, "@") {
+		return "", false
+	}
+	value = strings.TrimPrefix(value, "@")
+	if strings.TrimSpace(value) == "" {
+		return "", false
+	}
+	return value, true
 }
 
 type emojiResponse struct {
