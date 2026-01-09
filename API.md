@@ -48,3 +48,4 @@ Base URL: `http://localhost:8080` (adjust to your deployment, e.g. `https://api.
 Notes:
 - Names are unique per author; always specify author for lookups.
 - Binary image data is base64-encoded when `with_data=1|true`.
+- Accepted mime types: `image/png`, `image/webp`, `image/gif`. Other mime values are ignored during registration and will not be served.

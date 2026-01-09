@@ -115,6 +115,18 @@ func (p *Processor) handleV1(ctx context.Context, blockNum int64, payload []byte
 
 	switch msg.Op {
 	case "register":
+		mime, ok := storage.NormalizeEmojiMime(msg.Mime)
+		if !ok {
+			log.Printf(
+				"block %d: skip v1 register name=%s author=%s invalid mime=%q",
+				blockNum,
+				msg.Name,
+				safeAuthor(author),
+				msg.Mime,
+			)
+			return nil
+		}
+
 		loop, err := parseLoop(msg.Loop)
 		if err != nil {
 			return fmt.Errorf("loop: %w", err)
@@ -126,12 +138,23 @@ func (p *Processor) handleV1(ctx context.Context, blockNum int64, payload []byte
 		var fallbackData []byte
 		var fallbackMime string
 		if msg.Fallback != nil {
-			fb, err := base64.StdEncoding.DecodeString(msg.Fallback.Data)
-			if err != nil {
-				return fmt.Errorf("decode fallback: %w", err)
+			normalizedFallback, ok := storage.NormalizeEmojiMime(msg.Fallback.Mime)
+			if !ok {
+				log.Printf(
+					"block %d: skip v1 fallback name=%s author=%s invalid mime=%q",
+					blockNum,
+					msg.Name,
+					safeAuthor(author),
+					msg.Fallback.Mime,
+				)
+			} else {
+				fb, err := base64.StdEncoding.DecodeString(msg.Fallback.Data)
+				if err != nil {
+					return fmt.Errorf("decode fallback: %w", err)
+				}
+				fallbackData = fb
+				fallbackMime = normalizedFallback
 			}
-			fallbackData = fb
-			fallbackMime = msg.Fallback.Mime
 		}
 
 		log.Printf(
@@ -148,7 +171,7 @@ func (p *Processor) handleV1(ctx context.Context, blockNum int64, payload []byte
 		return p.store.UpsertV1(ctx, storage.RegisterV1{
 			Name:         msg.Name,
 			Author:       author,
-			Mime:         msg.Mime,
+			Mime:         mime,
 			Width:        msg.Width,
 			Height:       msg.Height,
 			Data:         raw,
@@ -205,6 +228,24 @@ func (p *Processor) handleV2(ctx context.Context, blockNum int64, payload []byte
 		return nil
 	}
 
+	kind := msg.Kind
+	if kind == "" {
+		kind = "main"
+	}
+
+	mime, ok := storage.NormalizeEmojiMime(msg.Mime)
+	if !ok {
+		log.Printf(
+			"block %d: skip v2 chunk name=%s author=%s kind=%s invalid mime=%q",
+			blockNum,
+			msg.Name,
+			safeAuthor(author),
+			kind,
+			msg.Mime,
+		)
+		return nil
+	}
+
 	if msg.Total <= 0 {
 		return errors.New("total must be > 0")
 	}
@@ -231,17 +272,12 @@ func (p *Processor) handleV2(ctx context.Context, blockNum int64, payload []byte
 		return fmt.Errorf("decode v2 chunk: %w", err)
 	}
 
-	kind := msg.Kind
-	if kind == "" {
-		kind = "main"
-	}
-
 	assembled, err := p.store.SaveChunk(ctx, storage.ChunkPayload{
 		ID:       msg.ID,
 		Author:   author,
 		Name:     msg.Name,
 		Version:  msg.Version,
-		Mime:     msg.Mime,
+		Mime:     mime,
 		Width:    msg.Width,
 		Height:   msg.Height,
 		Animated: msg.Animated,

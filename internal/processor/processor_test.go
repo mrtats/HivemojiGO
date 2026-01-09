@@ -13,10 +13,12 @@ import (
 type recordingStore struct {
 	lastV1    storage.RegisterV1
 	lastBlock int64
+	v1Calls   int
 }
 
 func (r *recordingStore) UpsertV1(ctx context.Context, payload storage.RegisterV1) error {
 	r.lastV1 = payload
+	r.v1Calls++
 	return nil
 }
 
@@ -76,10 +78,49 @@ func TestProcessBlock_V1Register(t *testing.T) {
 	if store.lastV1.Name != "pained_laugh" {
 		t.Fatalf("expected name pained_laugh, got %s", store.lastV1.Name)
 	}
+	if store.v1Calls != 1 {
+		t.Fatalf("expected 1 upsert call, got %d", store.v1Calls)
+	}
 	if store.lastBlock != 101482212 {
 		t.Fatalf("expected last block 101482212, got %d", store.lastBlock)
 	}
 	if len(store.lastV1.Data) == 0 {
 		t.Fatalf("expected image data to be present")
+	}
+}
+
+func TestProcessBlock_V1RegisterRejectsMime(t *testing.T) {
+	store := &recordingStore{}
+	proc := &Processor{store: store}
+
+	payload := `{"op":"register","version":1,"name":"bad_mime","mime":"text/html","width":1,"height":1,"data":"dGVzdA=="}`
+	opEnvelope := map[string]interface{}{
+		"id":                     "hivemoji",
+		"json":                   payload,
+		"required_auths":         []string{},
+		"required_posting_auths": []string{"mrtats"},
+	}
+	rawOp, err := json.Marshal(opEnvelope)
+	if err != nil {
+		t.Fatalf("marshal op envelope: %v", err)
+	}
+
+	opValue := hive.Operation{Type: "custom_json", Value: rawOp}
+
+	block := &hive.Block{
+		Number: 101482213,
+		Transactions: []hive.Transaction{
+			{Operations: []hive.Operation{opValue}},
+		},
+	}
+
+	if err := proc.ProcessBlock(context.Background(), block); err != nil {
+		t.Fatalf("ProcessBlock error: %v", err)
+	}
+	if store.v1Calls != 0 {
+		t.Fatalf("expected invalid mime to be skipped, got %d upserts", store.v1Calls)
+	}
+	if store.lastBlock != 101482213 {
+		t.Fatalf("expected last block 101482213, got %d", store.lastBlock)
 	}
 }

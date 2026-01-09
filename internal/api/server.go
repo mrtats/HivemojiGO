@@ -145,7 +145,12 @@ func (s *Server) handleGetImage(c echo.Context) error {
 		return echo.ErrNotFound
 	}
 
-	return c.Blob(http.StatusOK, asset.Mime, asset.Data)
+	mime, ok := storage.NormalizeEmojiMime(asset.Mime)
+	if !ok {
+		return echo.ErrNotFound
+	}
+
+	return c.Blob(http.StatusOK, mime, asset.Data)
 }
 
 func trimAtPrefix(raw string) (string, bool) {
