@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/base64"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -58,6 +59,20 @@ func (s *Server) handleListByAuthor(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "author is required")
 	}
 
+	// Get last modified time for ETag
+	lastModified, err := s.store.GetAuthorLastModified(c.Request().Context(), author)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+
+	// Generate ETag from last modified timestamp
+	etag := fmt.Sprintf(`"%d"`, lastModified.UnixNano())
+
+	// Check If-None-Match header for conditional request
+	if match := c.Request().Header.Get("If-None-Match"); match == etag {
+		return c.NoContent(http.StatusNotModified)
+	}
+
 	includeData := c.QueryParam("with_data") == "1" || strings.EqualFold(c.QueryParam("with_data"), "true")
 
 	assets, err := s.store.ListAssetsByAuthor(c.Request().Context(), author, includeData)
@@ -69,6 +84,10 @@ func (s *Server) handleListByAuthor(c echo.Context) error {
 	for _, a := range assets {
 		resp = append(resp, toResponse(a, includeData))
 	}
+
+	// Set cache headers
+	c.Response().Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
+	c.Response().Header().Set("ETag", etag)
 
 	return c.JSON(http.StatusOK, resp)
 }
@@ -148,6 +167,12 @@ func (s *Server) handleGetImage(c echo.Context) error {
 	mime, ok := storage.NormalizeEmojiMime(asset.Mime)
 	if !ok {
 		return echo.ErrNotFound
+	}
+
+	// Set cache headers for Cloudflare and browsers
+	c.Response().Header().Set("Cache-Control", "public, max-age=604800")
+	if asset.Checksum != nil && *asset.Checksum != "" {
+		c.Response().Header().Set("ETag", `"`+*asset.Checksum+`"`)
 	}
 
 	return c.Blob(http.StatusOK, mime, asset.Data)

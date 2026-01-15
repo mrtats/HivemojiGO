@@ -618,6 +618,25 @@ func (s *Store) ListAssetsByAuthor(ctx context.Context, author string, includeDa
 	return assets, nil
 }
 
+// GetAuthorLastModified returns the most recent updated_at timestamp for an author's emojis.
+// Returns zero time if the author has no emojis.
+func (s *Store) GetAuthorLastModified(ctx context.Context, author string) (time.Time, error) {
+	if strings.TrimSpace(author) == "" {
+		return time.Time{}, errors.New("author is required")
+	}
+
+	var lastModified *time.Time
+	err := s.pool.QueryRow(ctx, `SELECT MAX(updated_at) FROM hivemoji_assets WHERE author=$1`, author).Scan(&lastModified)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	if lastModified == nil {
+		return time.Time{}, nil
+	}
+	return *lastModified, nil
+}
+
 func nullIfEmpty(value string) *string {
 	if strings.TrimSpace(value) == "" {
 		return nil
